@@ -1,0 +1,24 @@
+# Layer 1: Hard rules — enforced in code, never sent to LLM
+hard_rules:
+  keywords_block:
+    - "全额退款"
+    - "无条件退款"
+    - "双倍赔偿"
+    - "三倍赔偿"
+    - "赔偿您"
+    - "补偿您"
+
+  forbidden_requests:
+    - "密码"
+    - "验证码"
+    - "身份证号"
+    - "银行卡号"
+
+  refund:
+    max_days: 30
+    requires_receipt: true
+    max_amount: 50000
+
+  tones:
+    abusive_keywords: ["投诉你", "举报", "起诉", "曝光"]
+    abusive_threshold: 2

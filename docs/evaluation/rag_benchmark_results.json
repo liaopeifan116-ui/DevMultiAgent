@@ -1,0 +1,266 @@
+{
+  "generated_at": "2026-06-04T23:44:47",
+  "case_count": 5,
+  "configs": {
+    "baseline_bm25_only": {
+      "parameters": {
+        "name": "baseline_bm25_only",
+        "bm25_weight": 1.0,
+        "overlap_weight": 0.0,
+        "k1": 1.2,
+        "b": 0.75,
+        "threshold": 0.05,
+        "top_k": 3
+      },
+      "hit_rate_at_k": 0.6,
+      "mrr": 0.6,
+      "irrelevant_false_positive_rate": 0.2,
+      "avg_latency_ms": 1.158,
+      "p95_latency_ms": 1.228
+    },
+    "mvp_hybrid": {
+      "parameters": {
+        "name": "mvp_hybrid",
+        "bm25_weight": 0.72,
+        "overlap_weight": 0.28,
+        "k1": 1.4,
+        "b": 0.65,
+        "threshold": 0.05,
+        "top_k": 5
+      },
+      "hit_rate_at_k": 0.6,
+      "mrr": 0.6,
+      "irrelevant_false_positive_rate": 0.2,
+      "avg_latency_ms": 1.139,
+      "p95_latency_ms": 1.216
+    }
+  },
+  "comparisons": {
+    "mvp_hybrid_vs_baseline_bm25_only": {
+      "hit_rate_at_k_delta_pct": 0.0,
+      "mrr_delta_pct": 0.0,
+      "irrelevant_false_positive_rate_delta_pct": 0.0,
+      "p95_latency_ms_delta_pct": -0.98
+    }
+  },
+  "cases": [
+    {
+      "config": "baseline_bm25_only",
+      "case_id": "refund_deadline",
+      "query": "超过7天还能退款吗",
+      "expected_sources": [
+        "refund_policy.md",
+        "after_sales_faq.md"
+      ],
+      "top_sources": [
+        "refund_policy.md",
+        "refund_policy.md",
+        "after_sales_faq.md"
+      ],
+      "top_scores": [
+        0.316,
+        0.216,
+        0.198
+      ],
+      "hit": true,
+      "first_expected_rank": 1,
+      "latency_ms": 1.028,
+      "note": "政策时效类查询，应命中退款/售后规则。"
+    },
+    {
+      "config": "baseline_bm25_only",
+      "case_id": "screen_defect",
+      "query": "手机屏幕坏点可以退货吗",
+      "expected_sources": [
+        "after_sales_faq.md",
+        "refund_policy.md"
+      ],
+      "top_sources": [
+        "after_sales_faq.md",
+        "privacy_policy.md",
+        "refund_policy.md"
+      ],
+      "top_scores": [
+        0.649,
+        0.09,
+        0.071
+      ],
+      "hit": true,
+      "first_expected_rank": 1,
+      "latency_ms": 1.228,
+      "note": "质量问题口语化查询，应命中售后 FAQ 或退款规则。"
+    },
+    {
+      "config": "baseline_bm25_only",
+      "case_id": "privacy_phone",
+      "query": "手机号和邮箱会怎么脱敏",
+      "expected_sources": [
+        "privacy_policy.md"
+      ],
+      "top_sources": [
+        "after_sales_faq.md",
+        "after_sales_faq.md",
+        "refund_policy.md"
+      ],
+      "top_scores": [
+        0.091,
+        0.077,
+        0.054
+      ],
+      "hit": false,
+      "first_expected_rank": null,
+      "latency_ms": 1.203,
+      "note": "字段级脱敏查询，应命中隐私规则。"
+    },
+    {
+      "config": "baseline_bm25_only",
+      "case_id": "invoice_refund",
+      "query": "没有发票还能申请售后吗",
+      "expected_sources": [
+        "after_sales_faq.md",
+        "refund_policy.md"
+      ],
+      "top_sources": [
+        "after_sales_faq.md",
+        "refund_policy.md",
+        "after_sales_faq.md"
+      ],
+      "top_scores": [
+        0.558,
+        0.137,
+        0.071
+      ],
+      "hit": true,
+      "first_expected_rank": 1,
+      "latency_ms": 1.214,
+      "note": "凭证/售后限制查询，应命中售后相关文档。"
+    },
+    {
+      "config": "baseline_bm25_only",
+      "case_id": "irrelevant_weather",
+      "query": "今天上海天气怎么样",
+      "expected_sources": [],
+      "top_sources": [
+        "after_sales_faq.md"
+      ],
+      "top_scores": [
+        0.098
+      ],
+      "hit": false,
+      "first_expected_rank": null,
+      "latency_ms": 1.118,
+      "note": "无关查询，用于观察误召回。"
+    },
+    {
+      "config": "mvp_hybrid",
+      "case_id": "refund_deadline",
+      "query": "超过7天还能退款吗",
+      "expected_sources": [
+        "refund_policy.md",
+        "after_sales_faq.md"
+      ],
+      "top_sources": [
+        "refund_policy.md",
+        "refund_policy.md",
+        "after_sales_faq.md",
+        "after_sales_faq.md",
+        "after_sales_faq.md"
+      ],
+      "top_scores": [
+        0.272,
+        0.202,
+        0.184,
+        0.151,
+        0.113
+      ],
+      "hit": true,
+      "first_expected_rank": 1,
+      "latency_ms": 0.982,
+      "note": "政策时效类查询，应命中退款/售后规则。"
+    },
+    {
+      "config": "mvp_hybrid",
+      "case_id": "screen_defect",
+      "query": "手机屏幕坏点可以退货吗",
+      "expected_sources": [
+        "after_sales_faq.md",
+        "refund_policy.md"
+      ],
+      "top_sources": [
+        "after_sales_faq.md",
+        "privacy_policy.md",
+        "refund_policy.md"
+      ],
+      "top_scores": [
+        0.538,
+        0.074,
+        0.073
+      ],
+      "hit": true,
+      "first_expected_rank": 1,
+      "latency_ms": 1.216,
+      "note": "质量问题口语化查询，应命中售后 FAQ 或退款规则。"
+    },
+    {
+      "config": "mvp_hybrid",
+      "case_id": "privacy_phone",
+      "query": "手机号和邮箱会怎么脱敏",
+      "expected_sources": [
+        "privacy_policy.md"
+      ],
+      "top_sources": [
+        "after_sales_faq.md",
+        "after_sales_faq.md"
+      ],
+      "top_scores": [
+        0.075,
+        0.066
+      ],
+      "hit": false,
+      "first_expected_rank": null,
+      "latency_ms": 1.209,
+      "note": "字段级脱敏查询，应命中隐私规则。"
+    },
+    {
+      "config": "mvp_hybrid",
+      "case_id": "invoice_refund",
+      "query": "没有发票还能申请售后吗",
+      "expected_sources": [
+        "after_sales_faq.md",
+        "refund_policy.md"
+      ],
+      "top_sources": [
+        "after_sales_faq.md",
+        "refund_policy.md",
+        "after_sales_faq.md",
+        "refund_policy.md"
+      ],
+      "top_scores": [
+        0.46,
+        0.131,
+        0.062,
+        0.051
+      ],
+      "hit": true,
+      "first_expected_rank": 1,
+      "latency_ms": 1.215,
+      "note": "凭证/售后限制查询，应命中售后相关文档。"
+    },
+    {
+      "config": "mvp_hybrid",
+      "case_id": "irrelevant_weather",
+      "query": "今天上海天气怎么样",
+      "expected_sources": [],
+      "top_sources": [
+        "after_sales_faq.md"
+      ],
+      "top_scores": [
+        0.084
+      ],
+      "hit": false,
+      "first_expected_rank": null,
+      "latency_ms": 1.071,
+      "note": "无关查询，用于观察误召回。"
+    }
+  ]
+}

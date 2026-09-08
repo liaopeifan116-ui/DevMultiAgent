@@ -1,0 +1,31 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local data and generated indexes
+data/models/
+data/chroma/
+data/*.db
+
+# Runtime evidence and generated reports
+devma/evidence/logs/
+devma/evidence/traces/
+devma/evidence/reports/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
