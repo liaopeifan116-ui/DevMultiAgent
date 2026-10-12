@@ -1,6 +1,9 @@
 """Refund eligibility check based on hard rules and order data."""
-import yaml
+
 from datetime import date, datetime
+
+import yaml
+
 from devma.config import RULES_DIR
 
 
@@ -22,7 +25,26 @@ def check_refund_eligibility(order: dict, issue_type: str = "quality") -> dict:
     refund_rules = rules.get("hard_rules", {}).get("refund", {})
     max_days = refund_rules.get("max_days", 30)
     requires_receipt = refund_rules.get("requires_receipt", True)
-    days = _days_since(order["purchase_date"])
+    try:
+        days = _days_since(order["purchase_date"])
+    except (KeyError, ValueError, TypeError):
+        return {
+            "eligible": False,
+            "reason": "订单购买日期缺失或无效，需人工核实。",
+            "action": "handoff",
+        }
+    if days < 0 or issue_type not in {"quality", "buyer_remorse"}:
+        return {
+            "eligible": False,
+            "reason": "订单日期或问题类型异常，需人工核实。",
+            "action": "handoff",
+        }
+    if order.get("price", 0) > refund_rules.get("max_amount", 50000):
+        return {
+            "eligible": False,
+            "reason": "订单金额超过自动审核上限，需人工核实。",
+            "action": "handoff",
+        }
 
     if requires_receipt and not order.get("has_receipt"):
         return {

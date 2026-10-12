@@ -17,6 +17,8 @@ venv/
 data/models/
 data/chroma/
 data/*.db
+data/*.db-wal
+data/*.db-shm
 
 # Runtime evidence and generated reports
 devma/evidence/logs/

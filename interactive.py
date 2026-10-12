@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 import re
 import sys
 import time
 import uuid
 
-if sys.platform == "win32":
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+from langgraph.types import Command
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
-from devma.orchestration.graph import build_graph
+from devma.orchestration.graph import open_graph
 from devma.tools.kb_search import get_kb_tool
-
 
 console = Console()
 
@@ -24,7 +26,9 @@ console = Console()
 def update_user_context(context: dict, text: str) -> list[tuple[str, str]]:
     """Extract lightweight product -> order mappings from user-provided facts."""
     captured: list[tuple[str, str]] = []
-    pairs = re.findall(r"(手机|电脑|耳机|订单|包裹)[^，。；;]*?订单号(?:是|为)?\s*#?(\d{4,})", text)
+    pairs = re.findall(
+        r"(手机|电脑|耳机|订单|包裹)[^，。；;]*?订单号(?:是|为)?\s*#?(\d{4,})", text
+    )
     for product, order_id in pairs:
         normalized = f"#{order_id}"
         context.setdefault("product_orders", {})[product] = normalized
@@ -53,12 +57,26 @@ def main() -> None:
         n = kb.seed()
         console.print(f"[green]KB loaded: {n} chunks indexed")
 
-    graph = build_graph()
-    session_id = str(uuid.uuid4())
-    user_context = {"product_orders": {}}
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--thread-id", default=str(uuid.uuid4()))
+    args = parser.parse_args()
+    with open_graph() as graph:
+        _chat_loop(graph, args.thread_id)
+
+
+def _chat_loop(graph, session_id):
+    console.print(
+        f"[dim]Thread: {session_id}; use --thread-id to reopen this conversation.[/dim]"
+    )
+    config = {"configurable": {"thread_id": session_id}, "recursion_limit": 60}
+    user_context = graph.get_state(config).values.get(
+        "user_context", {"product_orders": {}}
+    )
     last_metrics: dict = {}
 
-    console.print("[bold green]Ready! Type your message (or /quit to exit, /stats to show last metrics)[/bold green]\n")
+    console.print(
+        "[bold green]Ready! Type your message (or /quit to exit, /stats to show last metrics)[/bold green]\n"
+    )
 
     while True:
         try:
@@ -75,17 +93,59 @@ def main() -> None:
             show_stats(last_metrics)
             continue
 
-        update_user_context(user_context, user_input)
-        config = {"configurable": {"thread_id": session_id}, "recursion_limit": 25}
-        initial = {"messages": [{"role": "user", "content": user_input}], "user_context": user_context}
+        snapshot = graph.get_state(config)
+        if user_input.startswith("/resume "):
+            try:
+                answer = json.loads(user_input[len("/resume ") :])
+            except json.JSONDecodeError:
+                console.print("[red]Please provide valid JSON.[/red]")
+                continue
+            if not snapshot.next:
+                console.print("[yellow]No pending work to resume.[/yellow]")
+                continue
+            initial = (
+                Command(resume=answer)
+                if any(t.interrupts for t in snapshot.tasks)
+                else None
+            )
+        else:
+            if snapshot.next:
+                console.print(
+                    "[yellow]This conversation is paused. Use /resume JSON first.[/yellow]"
+                )
+                continue
+            update_user_context(user_context, user_input)
+            initial = {
+                "messages": [{"role": "user", "content": user_input}],
+                "user_context": user_context,
+            }
 
         started_at = time.perf_counter()
         with console.status("[bold blue]Processing..."):
             result = graph.invoke(initial, config)
         latency = round((time.perf_counter() - started_at) * 1000)
+        if result.get("__interrupt__"):
+            for item in result["__interrupt__"]:
+                console.print(
+                    json.dumps(
+                        {"interrupt_id": item.id, "request": item.value},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            console.print(
+                '[yellow]Use /resume {"order_id":"#1234"} or /resume {"approved":true}.[/yellow]'
+            )
+            continue
 
         console.print()
-        console.print(Panel(Markdown(result.get("final_output", "")), title="[bold green]Response", border_style="green"))
+        console.print(
+            Panel(
+                Markdown(result.get("final_output", "")),
+                title="[bold green]Response",
+                border_style="green",
+            )
+        )
 
         metrics = result.get("metrics", {})
         last_metrics = {
