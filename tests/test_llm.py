@@ -1,14 +1,21 @@
 """Tests for LLM adapter."""
+
+import pytest
+
 from devma.models.llm import DeepSeekLLM, LLMResponse
+
+pytestmark = pytest.mark.live
 
 
 def test_llm_simple_chat():
     """Basic sanity: LLM returns a response with content."""
     llm = DeepSeekLLM()
-    resp = llm.chat([
-        {"role": "system", "content": "Reply with exactly: OK"},
-        {"role": "user", "content": "Say OK"}
-    ])
+    resp = llm.chat(
+        [
+            {"role": "system", "content": "Reply with exactly: OK"},
+            {"role": "user", "content": "Say OK"},
+        ]
+    )
     assert isinstance(resp, LLMResponse)
     assert len(resp.content) > 0
     assert resp.model == "deepseek-chat"
@@ -39,7 +46,5 @@ def test_llm_structured_output():
 def test_llm_handles_long_prompt():
     """LLM handles multi-turn conversation."""
     llm = DeepSeekLLM()
-    resp = llm.chat([
-        {"role": "user", "content": "手机屏幕有坏点，买了25天，能退吗？"}
-    ])
+    resp = llm.chat([{"role": "user", "content": "手机屏幕有坏点，买了25天，能退吗？"}])
     assert len(resp.content) > 0

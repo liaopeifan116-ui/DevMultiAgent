@@ -1,4 +1,5 @@
 """Central configuration. Reads DEEPSEEK_API_KEY from .env file or env var."""
+
 import os
 from pathlib import Path
 
@@ -17,7 +18,9 @@ if _env_path.exists():
                 _key, _val = _line.split("=", 1)
                 os.environ.setdefault(_key.strip(), _val.strip().strip('"').strip("'"))
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_KEY = (
+    "" if os.getenv("DEVMA_OFFLINE") == "1" else os.getenv("DEEPSEEK_API_KEY", "")
+)
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 DEEPSEEK_MODEL = "deepseek-chat"
 
@@ -27,3 +30,8 @@ MAX_SOLVER_RETRY = 2
 
 # SQLite
 ORDER_DB_PATH = str(DATA_DIR / "orders.db")
+CHECKPOINT_DB_PATH = str(DATA_DIR / "checkpoints.db")
+MAX_TASKS = 12
+MAX_PARALLEL_TASKS = 4
+MAX_TECH_STEPS = 4
+MAX_PLAN_REVISIONS = 2

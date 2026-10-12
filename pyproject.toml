@@ -1,13 +1,12 @@
 [project]
 name = "devmultiagent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Multi-Agent Customer Service System - Vertical Slice MVP"
 requires-python = ">=3.12"
 dependencies = [
-    "langgraph>=0.4.0",
-    "langgraph-checkpoint>=2.0.0",
+    "langgraph>=1.2,<2",
+    "langgraph-checkpoint-sqlite>=3.0,<4",
     "openai>=1.0.0",
-    "chromadb>=0.5.0",
     "typer>=0.12.0",
     "rich>=13.0.0",
     "pyyaml>=6.0",
@@ -24,3 +23,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["devma*"]
+
+[tool.pytest.ini_options]
+markers = ["live: opt-in tests that call the paid model API"]

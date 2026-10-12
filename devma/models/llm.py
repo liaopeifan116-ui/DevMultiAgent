@@ -1,4 +1,5 @@
 """DeepSeek LLM adapter via openai SDK."""
+
 import json
 import time
 from dataclasses import dataclass, field
@@ -42,6 +43,8 @@ class DeepSeekLLM:
             self._client = openai.OpenAI(
                 api_key=DEEPSEEK_API_KEY,
                 base_url=DEEPSEEK_BASE_URL,
+                timeout=30.0,
+                max_retries=1,
             )
         return self._client
 
@@ -86,10 +89,12 @@ class DeepSeekLLM:
     ) -> dict[str, Any]:
         """Chat completion with structured JSON output."""
         full_messages = [{"role": "system", "content": system}] + messages
-        full_messages.append({
-            "role": "system",
-            "content": f"Respond ONLY with a JSON object matching this schema. No markdown, no explanation:\n{json.dumps(json_schema, ensure_ascii=False)}",
-        })
+        full_messages.append(
+            {
+                "role": "system",
+                "content": f"Respond ONLY with a JSON object matching this schema. No markdown, no explanation:\n{json.dumps(json_schema, ensure_ascii=False)}",
+            }
+        )
 
         resp = self.client.chat.completions.create(
             model=self.model,

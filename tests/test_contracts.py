@@ -1,14 +1,15 @@
 """Tests for runtime-validated Agent input/output contracts."""
+
 import pytest
 from pydantic import ValidationError
 
+from devma.models.llm import LLMResponse
 from devma.orchestration.contracts import (
     MonitorOutput,
     RouterOutput,
     SolverMetrics,
     SolverOutput,
 )
-from devma.models.llm import LLMResponse
 
 
 def test_router_output_accepts_valid_route_decision():
@@ -107,12 +108,16 @@ def test_solver_agent_returns_validated_solver_output(monkeypatch):
     from devma.agents import solver as solver_module
 
     solver = solver_module.AfterSalesSolver()
-    responses = iter([
-        LLMResponse(content='{"plan": ["查询规则", "生成回复"]}', model="fake"),
-        LLMResponse(content="可以申请换货或维修。", model="fake"),
-    ])
+    responses = iter(
+        [
+            LLMResponse(content='{"plan": ["查询规则", "生成回复"]}', model="fake"),
+            LLMResponse(content="可以申请换货或维修。", model="fake"),
+        ]
+    )
     monkeypatch.setattr(solver.llm, "chat", lambda *args, **kwargs: next(responses))
-    monkeypatch.setattr(solver_module, "search_kb", lambda *args, **kwargs: [])
+    from devma.tools import kb_search
+
+    monkeypatch.setattr(kb_search, "search_kb", lambda *args, **kwargs: [])
 
     result = solver.solve("手机屏幕有坏点", {"product": "手机", "issue": "屏幕坏点"})
 
@@ -123,7 +128,9 @@ def test_monitor_agent_returns_validated_monitor_output(monkeypatch):
     from devma.agents.monitor import MonitorAgent
 
     monitor = MonitorAgent()
-    monkeypatch.setattr(monitor, "_check2_commitment", lambda output: {"violation": False})
+    monkeypatch.setattr(
+        monitor, "_check2_commitment", lambda output: {"violation": False}
+    )
     monkeypatch.setattr(
         monitor,
         "_check3_grounding",
@@ -147,7 +154,9 @@ def test_monitor_hard_rule_rejects_without_llm_calls(monkeypatch):
     monkeypatch.setattr(
         monitor,
         "_check3_grounding",
-        lambda output, user_message: pytest.fail("hard-rule rejection must not query grounding"),
+        lambda output, user_message: pytest.fail(
+            "hard-rule rejection must not query grounding"
+        ),
     )
 
     result = monitor.check("好的，我们为您办理全额退款。", "我要退款", [])
@@ -167,7 +176,9 @@ def test_monitor_escalation_handoffs_without_llm_calls(monkeypatch):
     monkeypatch.setattr(
         monitor,
         "_check3_grounding",
-        lambda output, user_message: pytest.fail("escalation handoff must not query grounding"),
+        lambda output, user_message: pytest.fail(
+            "escalation handoff must not query grounding"
+        ),
     )
 
     result = monitor.check("好的，我来帮您处理。", "我要投诉你，我要曝光你们！", [])
