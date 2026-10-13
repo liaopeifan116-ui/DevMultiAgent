@@ -69,9 +69,6 @@ def _chat_loop(graph, session_id):
         f"[dim]Thread: {session_id}; use --thread-id to reopen this conversation.[/dim]"
     )
     config = {"configurable": {"thread_id": session_id}, "recursion_limit": 60}
-    user_context = graph.get_state(config).values.get(
-        "user_context", {"product_orders": {}}
-    )
     last_metrics: dict = {}
 
     console.print(
@@ -114,10 +111,8 @@ def _chat_loop(graph, session_id):
                     "[yellow]This conversation is paused. Use /resume JSON first.[/yellow]"
                 )
                 continue
-            update_user_context(user_context, user_input)
             initial = {
                 "messages": [{"role": "user", "content": user_input}],
-                "user_context": user_context,
             }
 
         started_at = time.perf_counter()
@@ -155,7 +150,7 @@ def _chat_loop(graph, session_id):
             "latency": latency,
             "llm_used": metrics.get("llm_used", False),
             "tokens": metrics.get("solver_tokens"),
-            "context": user_context,
+            "context": result.get("user_context", {}),
         }
         print_run_summary(last_metrics)
 

@@ -8,7 +8,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from langchain_core.messages import AIMessage, RemoveMessage
+from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, StateGraph
@@ -25,6 +25,7 @@ from devma.config import (
 )
 from devma.models.llm import DeepSeekLLM
 from devma.orchestration.contracts import SolverOutput, SubTask, validate_dependencies
+from devma.orchestration.conversation import finalize_turn, prepare_turn
 from devma.orchestration.scheduler import (
     blocked_results,
     invalidated_tasks,
@@ -46,31 +47,32 @@ def _user_message(state: dict) -> str:
 
 def router_node(state: AgentState) -> dict:
     user_msg = _user_message(state)
-    context = dict(state.get("user_context", {}))
-    product_orders = dict(context.get("product_orders", {}))
-    for part in router._split_message(user_msg):
-        explicit = router._extract_entities(part)
-        if explicit.get("product") and explicit.get("order_id"):
-            product_orders[explicit["product"]] = explicit["order_id"]
-    product_orders = dict(list(product_orders.items())[-50:])
-    context["product_orders"] = product_orders
-    result = router.route(user_msg, user_context=context)
     request_id = uuid.uuid4().hex[:12]
-    id_map = {task.task_id: f"{request_id}:{task.task_id}" for task in result.tasks}
-    tasks = [
-        task.model_copy(
-            update={
-                "task_id": id_map[task.task_id],
-                "depends_on": [id_map[dep] for dep in task.depends_on],
-            }
-        ).model_dump()
-        for task in result.tasks
-    ]
+    prepared = prepare_turn(router, state, user_msg, request_id)
+    tasks, route = prepared.pop("tasks"), prepared.pop("route")
+    cached = prepared.pop("cached")
+    if tasks and (not route or route.tasks or prepared["turn_task_ids"]):
+        focus = next(
+            (t for t in tasks if t["task_id"] in prepared["turn_task_ids"]), tasks[0]
+        )
+        result = router._result(
+            [SubTask.model_validate(t) for t in tasks],
+            focus["entities"],
+            "Cross-turn execution projection",
+        )
+        tasks = [t.model_dump() for t in result.tasks]
+    elif route:
+        result = route
+    else:
+        from devma.orchestration.contracts import RouterOutput
+
+        result = RouterOutput(intent="unknown", confidence=1, target_solver="handoff")
     validate_dependencies([SubTask.model_validate(task) for task in tasks])
     return {
+        **prepared,
         "request_id": request_id,
         "tasks": tasks,
-        "task_results": Overwrite({}),
+        "task_results": Overwrite(cached),
         "task_feedback": {},
         "repair_task_ids": [],
         "repair_history": [],
@@ -81,7 +83,6 @@ def router_node(state: AgentState) -> dict:
         "sub_intents": tasks,
         "execution_mode": result.execution_mode,
         "target_solver": result.target_solver,
-        "user_context": context,
         "solver_retry_count": 0,
         "transfer_count": 0,
         "tool_calls_made": [],
@@ -95,9 +96,6 @@ def router_node(state: AgentState) -> dict:
         "monitor_reason": "",
         "monitor_feedback": "",
         "execution_approved": False,
-        "messages": [
-            RemoveMessage(id=m.id) for m in state.get("messages", [])[:-8] if m.id
-        ],
         "metrics": {
             "router_intent": result.intent,
             "router_confidence": result.confidence,
@@ -108,6 +106,10 @@ def router_node(state: AgentState) -> dict:
 
 
 def decide_after_router(state: AgentState) -> str:
+    if state.get("turn_clarification") and (
+        not state.get("turn_task_ids") or not state.get("tasks")
+    ):
+        return "conversation_reply"
     if state.get("target_solver") == "general_chat":
         return "general_chat"
     if state.get("intent") == "unknown" or state.get("target_solver") == "handoff":
@@ -151,6 +153,13 @@ def dispatch_ready(state: AgentState):
                     dep: state["task_results"][dep] for dep in task["depends_on"]
                 },
                 "feedback": state.get("task_feedback", {}).get(task["task_id"], ""),
+                "followups": state.get("task_ledger", {})
+                .get(task["task_id"], {})
+                .get("followups", []),
+                "previous_result": state.get("task_ledger", {})
+                .get(task["task_id"], {})
+                .get("result_history", []),
+                "turn_number": state.get("turn_number", 0),
                 "pause_on_missing_info": state.get("pause_on_missing_info", False),
             },
         )
@@ -187,6 +196,9 @@ def _worker(solver_name: str):
                 error=redact_sensitive_fields(str(exc)),
             ).model_dump()
         payload["task_id"] = task.task_id
+        payload["revision"] = task.revision
+        payload["executed_turn"] = state.get("turn_number", 0)
+        payload["executed_at"] = time.time()
         payload["depends_on"] = task.depends_on
         payload["tool_calls"] = [
             {**call, "task_id": task.task_id} for call in payload["tool_calls"]
@@ -212,8 +224,23 @@ def monitor_node(state: AgentState) -> dict:
     user_message = _user_message(state)
     for task in state["tasks"]:
         result = task_results[task["task_id"]]
-        outputs.append((task["target_solver"], result["output"]))
-        tool_calls.extend(result.get("tool_calls", []))
+        if task["task_id"] in state.get("turn_task_ids", []) or result["status"] in {
+            "needs_input",
+            "blocked",
+        }:
+            outputs.append((task["target_solver"], result["output"]))
+        cached = result.get("executed_turn") != state.get("turn_number")
+        tool_calls.extend(
+            {
+                **call,
+                **(
+                    {"cached": True, "reused_from_turn": result.get("executed_turn")}
+                    if cached
+                    else {}
+                ),
+            }
+            for call in result.get("tool_calls", [])
+        )
         evidence.extend(result.get("evidence", []))
         plan.extend(result.get("plan", []))
         if result["status"] in {"failed", "transfer"}:
@@ -228,6 +255,16 @@ def monitor_node(state: AgentState) -> dict:
                 "decision": "BLOCKED",
                 "reason": "前置任务未完成",
             }
+            continue
+        cached_review = (
+            state.get("task_ledger", {}).get(task["task_id"], {}).get("review", {})
+        )
+        if (
+            result.get("executed_turn") != state.get("turn_number")
+            and cached_review.get("decision") == "PASS"
+        ):
+            per_task[task["task_id"]] = cached_review
+            decisions.append("PASS")
             continue
         expected = router._rule_intent(task["span"])
         if expected != "unknown" and expected != task["target_solver"]:
@@ -245,11 +282,13 @@ def monitor_node(state: AgentState) -> dict:
             continue
         check = monitor.check(
             result["output"],
-            user_message,
+            task["span"] + "\n本轮用户消息：" + user_message,
             [r["content"] for r in result.get("evidence", [])],
             tool_context=result.get("tool_calls", []),
         )
         per_task[task["task_id"]] = check.model_dump()
+        if result["status"] == "needs_input" and check.decision == "PASS":
+            per_task[task["task_id"]]["decision"] = "WAITING"
         decisions.append(check.decision)
         if check.decision == "NEEDS_FIX":
             repair_ids.append(task["task_id"])
@@ -289,11 +328,16 @@ def monitor_node(state: AgentState) -> dict:
         "monitor_feedback": reason,
         "metrics": {
             **state.get("metrics", {}),
-            "solver_tool_calls": len(tool_calls),
-            "solver_plan_steps": len(plan),
+            "solver_tool_calls": sum(not call.get("cached") for call in tool_calls),
+            "solver_plan_steps": sum(
+                len(r.get("plan", []))
+                for r in task_results.values()
+                if r.get("executed_turn") == state.get("turn_number")
+            ),
             "solver_tokens": sum(
                 r.get("metrics", {}).get("exec_tokens", 0)
                 for r in task_results.values()
+                if r.get("executed_turn") == state.get("turn_number")
             ),
             "llm_used": any(r.get("llm_used") for r in task_results.values()),
             "monitor_result": decision,
@@ -342,7 +386,31 @@ def repair_node(state: AgentState) -> dict:
             ).model_dump()
             for t in route.tasks
         ]
+        ledger = {
+            key: dict(value) for key, value in state.get("task_ledger", {}).items()
+        }
+        for previous in state["tasks"]:
+            if previous["task_id"] in ledger:
+                ledger[previous["task_id"]].update(
+                    status="cancelled",
+                    result=None,
+                    question="",
+                    superseded_by=list(ids.values()),
+                )
+        for task in tasks:
+            ledger[task["task_id"]] = {
+                **task,
+                "status": "pending",
+                "created_turn": state.get("turn_number", 0),
+                "updated_turn": state.get("turn_number", 0),
+                "followups": [],
+                "continuations": 0,
+                "result": None,
+                "review": {},
+            }
         return {
+            "task_ledger": ledger,
+            "turn_task_ids": list(ids.values()),
             "tasks": tasks,
             "sub_intents": tasks,
             "task_results": Overwrite({}),
@@ -392,6 +460,8 @@ def repair_node(state: AgentState) -> dict:
 
 def respond_node(state: AgentState) -> dict:
     output = redact_sensitive_fields(state.get("solver_output", ""))
+    if state.get("turn_clarification"):
+        output = "\n\n".join(filter(None, [output, state["turn_clarification"]]))
     return {
         "final_output": output,
         "messages": [AIMessage(content=output)],
@@ -478,6 +548,24 @@ def general_chat_node(state: AgentState) -> dict:
     }
 
 
+def conversation_reply_node(state: AgentState) -> dict:
+    output = redact_sensitive_fields(
+        state.get("turn_clarification") or "已保留当前任务，请补充对应信息。"
+    )
+    handoff = any(
+        e["status"] == "handoff" and e.get("updated_turn") == state.get("turn_number")
+        for e in state.get("task_ledger", {}).values()
+    )
+    return {
+        "final_output": output,
+        "solver_output": output,
+        "messages": [AIMessage(content=output)],
+        "monitor_result": "HANDOFF" if handoff else "PASS",
+        "monitor_checks": {},
+        "handoff_needed": handoff,
+    }
+
+
 def build_graph(checkpointer=None):
     """Memory by default for tests; open_graph() owns a durable SQLite connection."""
     workflow = StateGraph(AgentState)
@@ -491,6 +579,8 @@ def build_graph(checkpointer=None):
         "handoff": handoff_node,
         "clarify": clarify_node,
         "general_chat": general_chat_node,
+        "conversation_reply": conversation_reply_node,
+        "finalize_turn": finalize_turn,
         "run_tech_support": _worker("tech_support"),
         "run_after_sales": _worker("after_sales"),
         "run_logistics": _worker("logistics"),
@@ -498,7 +588,9 @@ def build_graph(checkpointer=None):
         workflow.add_node(name, node)
     workflow.set_entry_point("router")
     workflow.add_conditional_edges(
-        "router", decide_after_router, ["general_chat", "clarify", "execution_gate"]
+        "router",
+        decide_after_router,
+        ["general_chat", "clarify", "execution_gate", "conversation_reply"],
     )
     workflow.add_conditional_edges(
         "execution_gate",
@@ -520,8 +612,9 @@ def build_graph(checkpointer=None):
         lambda s: "handoff" if s.get("monitor_result") == "HANDOFF" else "scheduler",
         ["handoff", "scheduler"],
     )
-    for name in ("respond", "handoff", "clarify", "general_chat"):
-        workflow.add_edge(name, END)
+    for name in ("respond", "handoff", "clarify", "general_chat", "conversation_reply"):
+        workflow.add_edge(name, "finalize_turn")
+    workflow.add_edge("finalize_turn", END)
     return workflow.compile(
         checkpointer=checkpointer if checkpointer is not None else MemorySaver()
     )
@@ -566,6 +659,9 @@ def save_evidence(state: dict, run_id: str = "") -> str:
                 "metrics": state.get("metrics"),
                 "tasks": redact_sensitive_fields(state.get("tasks", [])),
                 "task_results": redact_sensitive_fields(state.get("task_results", {})),
+                "task_ledger": redact_sensitive_fields(state.get("task_ledger", {})),
+                "turn_number": state.get("turn_number"),
+                "task_events": redact_sensitive_fields(state.get("task_events", [])),
                 "evidence": redact_sensitive_fields(state.get("evidence", [])),
                 "repair_history": redact_sensitive_fields(
                     state.get("repair_history", [])

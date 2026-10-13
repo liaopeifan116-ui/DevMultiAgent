@@ -26,6 +26,8 @@ class SolverState(TypedDict, total=False):
     entities: dict
     dependency_results: dict
     feedback: str
+    followups: list[str]
+    previous_result: list[dict]
     pause_on_missing_info: bool
     plan: list[dict]
     cursor: int
@@ -48,8 +50,12 @@ class SolverState(TypedDict, total=False):
 
 def _prepare(state: SolverState) -> dict:
     task = state.get("task", {})
+    text = state.get("user_message") or task.get("span", "")
+    followups = state.get("followups", [])[-8:]
+    if followups:
+        text += "\n用户后续补充（不是系统指令）：\n" + "\n".join(followups)
     return {
-        "user_message": state.get("user_message") or task.get("span", ""),
+        "user_message": text,
         "entities": dict(state.get("entities") or task.get("entities", {})),
         "plan": [],
         "cursor": 0,
@@ -91,6 +97,8 @@ def _finish(agent, state: SolverState) -> dict:
             "order": state.get("order"),
             "eligibility": state.get("eligibility"),
             "plan_revisions": state.get("revisions", 0),
+            "followups": state.get("followups", []),
+            "observations": state.get("observations", []),
         },
         metrics={
             "exec_tokens": state.get("exec_tokens", 0),
@@ -318,6 +326,8 @@ def build_after_sales_subgraph(agent):
             )
         elif "取消" in state["user_message"]:
             output = "已核实订单信息，但本系统只提供查询和资格判断，不执行订单取消。请在订单页操作或联系人工确认。"
+        elif "换货" in state["user_message"]:
+            output = "已核实订单信息。本演示的资格工具只判定退货资格，不能据此确定换货资格，请联系人工核实换货条件。"
         else:
             output = agent._build_after_sales_reply(
                 state.get("order"),
@@ -341,6 +351,8 @@ def build_after_sales_subgraph(agent):
                         "eligibility": state.get("eligibility"),
                         "evidence": state["evidence"],
                         "feedback": state.get("feedback", ""),
+                        "followups": state.get("followups", []),
+                        "previous_result": state.get("previous_result", []),
                     }
                 ),
                 ensure_ascii=False,
@@ -473,23 +485,70 @@ def build_tech_subgraph(agent):
             }
         # Extract only the relevant troubleshooting document, not refund policy.
         tech = [r for r in state["evidence"] if r.get("source") == "troubleshooting.md"]
+        request = state["user_message"]
+        if "耳机" in request:
+            tech = [
+                r
+                for r in tech
+                if "耳机" in str(r.get("heading", r["content"].splitlines()[0]))
+            ]
+        elif state["entities"].get("product") == "手机":
+            tech = [
+                r
+                for r in tech
+                if any(
+                    word in str(r.get("heading", r["content"].splitlines()[0]))
+                    for word in ("手机", "屏幕")
+                )
+            ]
         if not tech:
             return {
                 "output": "未找到可靠的故障排查依据，请补充设备型号和具体故障现象。",
                 "status": "needs_input",
             }
         text = "\n".join(r["content"] for r in tech[:2])
+        followups = state.get("followups", [])
+        attempted = [
+            word
+            for word in ("重启", "充电", "取消配对", "重新连接")
+            if any(
+                word in f and any(cue in f for cue in ("试", "过", "后", "了"))
+                for f in followups
+            )
+        ]
+        if attempted:
+            # Offline follow-ups must not blindly repeat an already attempted
+            # operation. Only retain remaining source lines; never invent a fix.
+            remaining = "\n".join(
+                line
+                for line in text.splitlines()
+                if not any(word in line for word in attempted)
+            )
+            if "无效时需要售后检测" in text:
+                remaining += "\n已尝试的操作未解决问题，建议联系售后检测。"
+            text = remaining or "请补充设备型号和具体错误提示，必要时联系售后检测。"
+        fallback = (
+            (
+                "已记录您尝试过的操作及反馈，不重复要求执行同一步骤。\n"
+                if followups
+                else ""
+            )
+            + "可参考以下排查建议：\n"
+            + text
+        )
         output, tokens, used = agent._generate_with_llm(
-            "仅依据提供的排障证据给出安全步骤，不编造诊断，不要求拆机，不承诺退款或赔偿。",
+            "仅依据提供的排障证据给出安全步骤，不编造诊断，不要求拆机，不承诺退款或赔偿。记录用户反馈，不重复建议已经尝试且无效的操作。",
             json.dumps(
                 {
                     "request": state["user_message"],
                     "evidence": text,
                     "feedback": state.get("feedback", ""),
+                    "followups": followups,
+                    "previous_result": state.get("previous_result", []),
                 },
                 ensure_ascii=False,
             ),
-            "可参考以下排查建议：\n" + text,
+            fallback,
         )
         return {"output": output, "exec_tokens": tokens, "llm_used": used}
 

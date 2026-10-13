@@ -20,6 +20,16 @@ def merge_task_results(current: dict, updates: dict) -> dict:
 
 
 class AgentState(MessagesState):
+    # Business lifecycle persists across turns. tasks/task_results are the
+    # execution projection for ONE turn, not a second authoritative ledger.
+    task_ledger: dict[str, dict[str, Any]]
+    turn_number: int
+    turn_task_ids: list[str]
+    turn_notice: str
+    turn_clarification: str
+    conversation_summary: str
+    archived_tasks: list[dict[str, Any]]
+    task_events: list[dict[str, Any]]
     request_id: str
     tasks: list[dict[str, Any]]
     task_results: Annotated[dict[str, dict[str, Any]], merge_task_results]

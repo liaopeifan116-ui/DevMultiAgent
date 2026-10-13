@@ -319,7 +319,16 @@ class RouterAgent:
                 from devma.tools.order_query import get_all_product_tokens
 
                 for token in get_all_product_tokens():
-                    if token.lower() in text.lower():
+                    # Order digits must not match model-number tokens such as
+                    # "12" or "14" and masquerade as a product in a slot reply.
+                    if token.isdigit():
+                        continue
+                    pattern = (
+                        r"(?<![a-zA-Z0-9])" + re.escape(token) + r"(?![a-zA-Z0-9])"
+                        if re.fullmatch(r"[a-zA-Z0-9]+", token)
+                        else re.escape(token)
+                    )
+                    if re.search(pattern, text, re.IGNORECASE):
                         entities["product"] = token
                         break
             except Exception:

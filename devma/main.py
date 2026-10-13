@@ -70,7 +70,7 @@ def chat(
         False, "--pause-on-missing-info", help="Pause to ask for order information"
     ),
 ):
-    """Run a single conversation through Router -> Solver -> Monitor."""
+    """Run a turn; reuse --thread-id to continue pending business tasks."""
     kb = get_kb_tool()
     with console.status("[bold yellow]Loading knowledge base..."):
         n = kb.seed()
@@ -177,16 +177,19 @@ def status(thread_id: str):
             json.dumps(
                 {
                     "next": snapshot.next,
+                    "turn_number": snapshot.values.get("turn_number", 0),
                     "tasks": [
                         {
                             "task_id": t["task_id"],
                             "solver": t["target_solver"],
                             "depends_on": t["depends_on"],
-                            "status": snapshot.values.get("task_results", {})
-                            .get(t["task_id"], {})
-                            .get("status", "pending"),
+                            "status": t.get("status", "pending"),
+                            "revision": t.get("revision", 1),
+                            "missing_fields": t.get("missing_fields", []),
+                            "clarification_id": t.get("clarification_id", ""),
+                            "question": t.get("question", ""),
                         }
-                        for t in snapshot.values.get("tasks", [])
+                        for t in snapshot.values.get("task_ledger", {}).values()
                     ],
                 },
                 ensure_ascii=False,

@@ -21,6 +21,7 @@ class SubTask(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     resource_keys: list[str] = Field(default_factory=list)
     access: Literal["read", "write"] = "read"
+    revision: int = Field(default=1, ge=1)
 
     @model_validator(mode="after")
     def consistent_target(self):
@@ -151,3 +152,19 @@ class MonitorOutput(ContractModel):
         if key == "result":
             return self.decision
         return super().get(key, default)
+
+
+class TaskPatch(BaseModel):
+    """A proposed cross-turn change; source and association are checked in code."""
+
+    task_id: str
+    revision: int = Field(ge=1)
+    action: Literal["fill", "correct", "feedback", "cancel"]
+    span: str = Field(min_length=1, max_length=4000)
+    entities: dict[str, str] = Field(default_factory=dict)
+
+
+class TurnResolution(BaseModel):
+    patches: list[TaskPatch] = Field(default_factory=list, max_length=12)
+    new_requests: list[str] = Field(default_factory=list, max_length=12)
+    clarification: str = ""
